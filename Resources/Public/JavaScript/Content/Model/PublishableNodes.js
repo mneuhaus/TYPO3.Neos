@@ -11,7 +11,9 @@ define(
 	'vie/entity',
 	'Shared/EventDispatcher',
 	'Shared/NodeTypeService',
-	'Shared/Notification'
+	'Shared/Notification',
+	'Shared/Endpoint/WorkspaceEndpoint',
+	'Shared/Endpoint/NodeEndpoint'
 ], function(
 	Ember,
 	$,
@@ -19,7 +21,9 @@ define(
 	EntityWrapper,
 	EventDispatcher,
 	NodeTypeService,
-	Notification
+	Notification,
+	WorkspaceEndpoint,
+	NodeEndpoint
 ) {
 	return Ember.Object.extend({
 		publishableEntitySubjects: [],
@@ -91,76 +95,95 @@ define(
 		 * Publish all blocks which are unsaved *and* on current page.
 		 */
 		publishChanges: function(autoPublish) {
-			var that = this;
-			T3.Content.Controller.ServerConnection.sendAllToServer(
-				this.get('publishableEntitySubjects'),
-				function(subject) {
+			var that = this,
+				transformFn = function(subject) {
 					var entity = vie.entities.get(subject);
 					return [entity.fromReference(subject), 'live'];
 				},
-				TYPO3_Neos_Service_ExtDirect_V1_Controller_WorkspaceController.publishNode,
-				function() {
-					if (autoPublish != true) {
-						var nodeTypeSchema = NodeTypeService.getCurrentNodeTypeSchema(),
-							title = $('#neos-page-metainformation').attr('data-neos-title')
-						Notification.ok('Published changes for ' + nodeTypeSchema.ui.label + ' "' + title + '".');
-					}
-				},
-				function(subject) {
-					var entity = vie.entities.get(subject);
-					entity.set('typo3:__workspacename', 'live');
+				numberOfUnsavedRecords = this.get('publishableEntitySubjects').get('length');
 
-					var nodePath = entity.id.substr(1, entity.id.lastIndexOf('@') - 1),
-						node = that.get('workspaceWidePublishableEntitySubjects').findBy('nodePath', nodePath);
-					if (node) {
-						that.get('workspaceWidePublishableEntitySubjects').removeObject(node);
+			this.get('publishableEntitySubjects').forEach(function(element) {
+				// Force copy of array
+				var args = transformFn(element).slice();
+				NodeEndpoint.set('_saveRunning', true);
+
+				NodeEndpoint.update(args[0]).then(
+					function() {
+						that._removeNodeFromPublishableEntitySubjects(element, 'live');
+						numberOfUnsavedRecords--;
+						if (numberOfUnsavedRecords <= 0) {
+							NodeEndpoint.set('_saveRunning', false);
+
+							if (autoPublish != true) {
+								var nodeTypeSchema = NodeTypeService.getCurrentNodeTypeSchema(),
+									title = $('#neos-page-metainformation').attr('data-neos-title')
+								Notification.ok('Published changes for ' + nodeTypeSchema.ui.label + ' "' + title + '".');
+							}
+						}
 					}
-				}
-			);
+				);
+			});
+		},
+
+		_removeNodeFromPublishableEntitySubjects: function(subject, workspaceOverride) {
+			var that = this,
+				entity = vie.entities.get(subject);
+			if (workspaceOverride) {
+				entity.set('typo3:__workspacename', workspaceOverride);
+			}
+
+			var nodePath = entity.id.substr(1, entity.id.lastIndexOf('@') - 1),
+				node = that.get('workspaceWidePublishableEntitySubjects').findBy('nodePath', nodePath);
+			if (node) {
+				that.get('workspaceWidePublishableEntitySubjects').removeObject(node);
+			}
 		},
 
 		/**
 		 * Discard all blocks which are unsaved *and* on current page.
 		 */
 		discardChanges: function() {
-			var that = this;
-			T3.Content.Controller.ServerConnection.sendAllToServer(
-				this.get('publishableEntitySubjects'),
-				function(subject) {
+			var that = this,
+				transformFn = function(subject) {
 					var entity = vie.entities.get(subject);
 					return [entity.fromReference(subject)];
 				},
-				TYPO3_Neos_Service_ExtDirect_V1_Controller_WorkspaceController.discardNode,
-				function() {
-					require(
-						{context: 'neos'},
-						[
-							'Content/Application'
-						],
-						function(ContentModule) {
-							ContentModule.reloadPage();
-							ContentModule.one('pageLoaded', function() {
-								Ember.run.next(function() {
-									EventDispatcher.trigger('nodesInvalidated');
-									EventDispatcher.trigger('contentChanged');
-								});
-							});
-						}
-					);
-					var nodeTypeSchema = NodeTypeService.getCurrentNodeTypeSchema(),
-						title = $('#neos-page-metainformation').attr('data-neos-title')
-					Notification.ok('Discarded changes for ' + nodeTypeSchema.ui.label + ' "' + title + '".');
-				},
-				function(subject) {
-					var entity = vie.entities.get(subject);
+				numberOfUnsavedRecords = this.get('publishableEntitySubjects').get('length');
 
-					var nodePath = entity.id.substr(1, entity.id.lastIndexOf('@') - 1),
-						node = that.get('workspaceWidePublishableEntitySubjects').findBy('nodePath', nodePath);
-					if (node) {
-						that.get('workspaceWidePublishableEntitySubjects').removeObject(node);
+			this.get('publishableEntitySubjects').forEach(function(element) {
+				// Force copy of array
+				var args = transformFn(element).slice();
+				NodeEndpoint.set('_saveRunning', true);
+
+				NodeEndpoint.discardNode(args[0]).then(
+					function() {
+						that._removeNodeFromPublishableEntitySubjects(element);
+						numberOfUnsavedRecords--;
+						if (numberOfUnsavedRecords <= 0) {
+							NodeEndpoint.set('_saveRunning', false);
+
+							require(
+								{context: 'neos'},
+								[
+									'Content/Application'
+								],
+								function(ContentModule) {
+									ContentModule.reloadPage();
+									ContentModule.one('pageLoaded', function() {
+										Ember.run.next(function() {
+											EventDispatcher.trigger('nodesInvalidated');
+											EventDispatcher.trigger('contentChanged');
+										});
+									});
+								}
+							);
+							var nodeTypeSchema = NodeTypeService.getCurrentNodeTypeSchema(),
+								title = $('#neos-page-metainformation').attr('data-neos-title');
+							Notification.ok('Discarded changes for ' + nodeTypeSchema.ui.label + ' "' + title + '".');
+						}
 					}
-				}
-			);
+				);
+			});
 		},
 
 		/**
@@ -171,19 +194,20 @@ define(
 				workspaceName = siteRoot.substr(siteRoot.lastIndexOf('@') + 1),
 				publishableEntities = this.get('publishableEntitySubjects'),
 				that = this;
-			TYPO3_Neos_Service_ExtDirect_V1_Controller_WorkspaceController.publishAll(workspaceName, function(result) {
-				if (typeof result !== 'undefined' && result !== null && result.success === true) {
+
+			WorkspaceEndpoint.publishAll(workspaceName).then(
+				function() {
 					$.each(publishableEntities, function(index, element) {
 						vie.entities.get(element).set('typo3:__workspacename', 'live');
 					});
 
 					that.getWorkspaceWideUnpublishedNodes();
-
 					Notification.ok('Published all changes.');
-				} else {
+				},
+				function() {
 					Notification.error('Unexpected error while publishing all changes: ' + JSON.stringify(result));
 				}
-			});
+			);
 		},
 
 		/**
@@ -193,8 +217,8 @@ define(
 			var siteRoot = $('#neos-page-metainformation').attr('data-__siteroot'),
 				workspaceName = siteRoot.substr(siteRoot.lastIndexOf('@') + 1),
 				that = this;
-			TYPO3_Neos_Service_ExtDirect_V1_Controller_WorkspaceController.discardAll(workspaceName, function(result) {
-				if (typeof result !== 'undefined' && result !== null && result.success === true) {
+			WorkspaceEndpoint.discardAll(workspaceName).then(
+				function() {
 					require(
 						{context: 'neos'},
 						[
@@ -212,10 +236,11 @@ define(
 					);
 					that.getWorkspaceWideUnpublishedNodes();
 					Notification.ok('Discarded all changes.');
-				} else {
+				},
+				function() {
 					Notification.error('Unexpected error while discarding all changes: ' + JSON.stringify(result));
 				}
-			});
+			);
 		},
 
 		/**
@@ -225,11 +250,12 @@ define(
 			var siteRoot = $('#neos-page-metainformation').attr('data-__siteroot'),
 				workspaceName = siteRoot.substr(siteRoot.lastIndexOf('@') + 1),
 				that = this;
-			if (typeof TYPO3_Neos_Service_ExtDirect_V1_Controller_WorkspaceController !== 'undefined') {
-				TYPO3_Neos_Service_ExtDirect_V1_Controller_WorkspaceController.getWorkspaceWideUnpublishedNodes(workspaceName, function(result) {
+
+			WorkspaceEndpoint.getWorkspaceWideUnpublishedNodes(workspaceName).then(
+				function(result) {
 					that.set('workspaceWidePublishableEntitySubjects', result.data);
-				});
-			}
+				}
+			);
 		}
 
 	}).create();

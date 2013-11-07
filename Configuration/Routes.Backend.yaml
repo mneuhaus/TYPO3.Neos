@@ -18,21 +18,21 @@
 
 -
   name: 'Content Module - Images'
-  uriPattern: 'content/imageWithMetadata/{image}'
+  uriPattern: 'content/imagewithmetadata/{image}'
   defaults:
     '@controller': 'Backend\Content'
     '@action':     'imageWithMetadata'
 
 -
   name: 'Content Module - Plugin Views'
-  uriPattern: 'content/pluginViews'
+  uriPattern: 'content/pluginviews'
   defaults:
     '@controller': 'Backend\Content'
     '@action':     'pluginViews'
 
 -
   name: 'Content Module - Master Plugins'
-  uriPattern: 'content/masterPlugins'
+  uriPattern: 'content/masterplugins'
   defaults:
     '@controller': 'Backend\Content'
     '@action':     'masterPlugins'
