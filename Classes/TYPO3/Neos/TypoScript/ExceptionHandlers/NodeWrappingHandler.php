@@ -36,6 +36,15 @@ class NodeWrappingHandler extends AbstractRenderingExceptionHandler {
 	 * @return string
 	 */
 	protected function handle($typoScriptPath, \Exception $exception, $referenceCode) {
+		$context = $this->getRuntime()->getCurrentContext();
+		if (isset($context['node'])) {
+			$node = $context['node'];
+			if ($node->getContext()->getWorkspace()->getName() === 'live'
+				&& $exception instanceof \TYPO3\Flow\Security\Exception) {
+				throw $exception;
+			}
+		}
+
 		$path = sprintf(
 			'<div class="neos-typoscript-path"><div class="neos-typoscript-rootpath">%s</div></div>',
 			$this->formatScriptPath($typoScriptPath, '</div><div class="neos-typoscript-subpath">')
@@ -50,7 +59,6 @@ class NodeWrappingHandler extends AbstractRenderingExceptionHandler {
 			$message
 		);
 
-		$context = $this->getRuntime()->getCurrentContext();
 		if (isset($context['node'])) {
 			$node = $context['node'];
 			return $this->contentElementWrappingService->wrapContentObject($node, $typoScriptPath, $output);
