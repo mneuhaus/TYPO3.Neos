@@ -1,0 +1,8 @@
+TYPO3:
+  Flow:
+    baseUri: http://neos.travis/
+    persistence:
+      backendOptions:
+        dbname: 'neos_travis'
+        driver: pdo_mysql
+        user: 'root'

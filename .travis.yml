@@ -1,0 +1,74 @@
+language: php
+
+php:
+  - 5.4
+  - 5.5
+
+#  - hhvm
+# matrix:
+#   allow_failures:
+#     - php: hhvm
+
+before_script:
+  # Go back one step
+  - cd ..
+
+  # Clone base Distribution
+  - git clone git://git.typo3.org/Neos/Distributions/Base.git Base
+  - cd Base
+
+  # Install
+  - composer install --prefer-source
+
+  # remove package installed by composer and replace it with the travis checkout
+  - rm -rf Packages/Application/TYPO3.Neos
+  - mv ../TYPO3.Neos/Travis Travis
+  - mv ../TYPO3.Neos Packages/Application/
+  - sudo apt-get install apache2 libapache2-mod-fastcgi
+
+  # enable php-fpm
+  - sudo cp ~/.phpenv/versions/$(phpenv version-name)/etc/php-fpm.conf.default ~/.phpenv/versions/$(phpenv version-name)/etc/php-fpm.conf
+  - sudo a2enmod rewrite actions fastcgi alias
+  - echo "cgi.fix_pathinfo = 1" >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
+  - ~/.phpenv/versions/$(phpenv version-name)/sbin/php-fpm
+
+  # configure apache virtual hosts
+  - sudo cp -f Travis/VirtualHost /etc/apache2/sites-available/default
+  - sudo sed -e "s?%TRAVIS_BUILD_DIR%?$(pwd)?g" --in-place /etc/apache2/sites-available/default
+  - echo "127.0.0.1 neos.travis" | sudo tee -a /etc/hosts
+  - sudo service apache2 restart
+
+  # Create configuration
+  - mkdir -p Configuration/Testing/Behat
+  - cp Travis/Settings.yaml Configuration/Testing/Behat/Settings.yaml
+  - mkdir -p Configuration/Development/Behat
+  - cp Travis/Settings.yaml Configuration/Development/Behat/Settings.yaml
+  - cp Travis/Behat.yml Packages/Application/TYPO3.Neos/Tests/Behavior/behat.yml
+  - cp Travis/Behat.yml Packages/Application/TYPO3.TYPO3CR/Tests/Behavior/behat.yml
+
+  # Set up selenium
+  #- "sh -e /etc/init.d/xvfb start"
+  #- "export DISPLAY=:99.0"
+  #- "/sbin/start-stop-daemon --start --quiet --pidfile /tmp/custom_xvfb_99.pid --make-pidfile --background --exec /usr/bin/Xvfb -- :99 -ac -screen 0 1280x1024x16"
+  - "wget http://selenium-release.storage.googleapis.com/2.43/selenium-server-standalone-2.43.1.jar"
+  - "phantomjs --webdriver=8643 > /dev/null &"
+  - "java -jar selenium-server-standalone-2.43.1.jar > /dev/null &"
+  - sleep 5
+
+  # setup up behat
+  - php ./flow behat:setup
+
+  # create the database
+  - mysql -e 'CREATE DATABASE neos_travis;'
+
+  # Warmup Caches
+  - FLOW_CONTEXT=Development/Behat ./flow flow:cache:warmup
+
+after_script:
+  - mysql -e 'DROP DATABASE neos_travis;'
+
+script:
+    #- phpunit -c Build/BuildEssentials/PhpUnit/UnitTests.xml
+    #- phpunit -c Build/BuildEssentials/PhpUnit/FunctionalTests.xml
+    - bin/behat -c Packages/Application/TYPO3.Neos/Tests/Behavior/behat.yml
+    - bin/behat -c Packages/Application/TYPO3.TYPO3CR/Tests/Behavior/behat.yml
